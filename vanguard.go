@@ -16,8 +16,8 @@ import (
 	"google.golang.org/api/sheets/v4"
 	"google.golang.org/api/slides/v1"
 
-	gDrv "github.com/madkins23/google/drive"
-	gSht "github.com/madkins23/google/drive/sheets"
+	gDrv "github.com/madkins23/go-google/drive"
+	gSht "github.com/madkins23/go-google/drive/sheets"
 )
 
 const (
