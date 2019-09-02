@@ -1,14 +1,16 @@
 # vanguard
 
-A simple Go script to process Vanguard CSV downloads into a Google spreadsheet.
+Go script to process Vanguard CSV downloads into a Google spreadsheet.
 
 ## Caveats
 
 * This code is presented as an example, not a production-ready application.
 * Don't expect support or excessive documentation.
-* (At least) one aspect of the code is peculiar to Linux.
+* Code runs on Ubuntu Linux, not tested on any other OS.
+* Requires Google project, certificate, secret file
+(see [`github.com/madkins23/go-google/oauth2`](https://github.com/madkins23/go-google/tree/master/oauth2)).
+* May require individual domain (not sure).
 * Fork the repository or copy the code for your own use.
-* You will need a drive secret / token files, not currently documented.
 
 ## Usage
 
@@ -49,4 +51,4 @@ A simple Go script to process Vanguard CSV downloads into a Google spreadsheet.
 1. The script currently expects file `~/Downloads/ofxdownload.csv` as input.
     * By default this file will be deleted after use unless `--delete=false` is set on the command line.
     * Configure the spreadsheet using its ID from the URL (e.g. `https://docs.google.com/spreadsheets/d/nastyLongIDHere`)
-      using the `--id=nastyLongIDHere` flag.
+      using the `--id=nastyLongIDHere` flag or `export VANGUARD_ID=nastyLongIDHere`.
