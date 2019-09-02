@@ -8,6 +8,7 @@ A simple Go script to process Vanguard CSV downloads into a Google spreadsheet.
 * Don't expect support or excessive documentation.
 * (At least) one aspect of the code is peculiar to Linux.
 * Fork the repository or copy the code for your own use.
+* You will need a drive secret / token files, not currently documented.
 
 ## Usage
 

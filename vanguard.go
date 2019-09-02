@@ -5,32 +5,28 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
 	"os"
-	"os/user"
-	"path/filepath"
 	"strconv"
 	"strings"
 
-	"google.golang.org/api/drive/v2"
+	"golang.org/x/xerrors"
+	"google.golang.org/api/option"
 	"google.golang.org/api/sheets/v4"
-	"google.golang.org/api/slides/v1"
 
-	gDrv "github.com/madkins23/go-google/drive"
 	gSht "github.com/madkins23/go-google/drive/sheets"
+	gAuth "github.com/madkins23/go-google/oauth2"
+	"github.com/madkins23/go-utils/path"
 )
 
 const (
-	downloadPath = "Downloads/ofxdownload.csv"
-)
-
-const (
+	// Data load state.
 	start = iota
 	investments
 	funds
 )
 
 const (
+	// Column names.
 	colAccount = "account"
 	colActual  = "actual"
 	colCurrent = "current"
@@ -46,6 +42,8 @@ const (
 )
 
 const (
+	// Help strings for command line flags.
+	dataFlagHelp   = "path of data file [~/Downloads/ofxdownload.csv]"
 	debugFlagHelp  = "debug level [1]"
 	deleteFlagHelp = "delete data file after successful insertion [true]"
 	helpFlagHelp   = "show usage data [true]"
@@ -53,6 +51,7 @@ const (
 )
 
 const (
+	// Format strings.
 	flagFormat    = "  %-16s  %s\n"
 	accountFormat = "> %-12s %-32s %s"
 	rowFormat     = ">        # %3d %8s %v%s"
@@ -64,6 +63,8 @@ type positionData struct {
 }
 
 var (
+	// Command line flags.
+	dataFlag   = flag.String("data", "~/Downloads/ofxdownload.csv", dataFlagHelp)
 	debugFlag  = flag.Int("debug", 1, debugFlagHelp)
 	deleteFlag = flag.Bool("delete", true, deleteFlagHelp)
 	helpFlag   = flag.Bool("help", false, helpFlagHelp)
@@ -79,53 +80,58 @@ func main() {
 		var found bool
 		if *idFlag, found = os.LookupEnv("VANGUARD_ID"); !found {
 			fmt.Println("**** --id=<sheetID> is required")
-			*helpFlag = true
+			usage()
+			return
 		}
 	}
 
 	if *helpFlag {
-		fmt.Println("Usage:  vanguard")
-		fmt.Println("Flags:")
-		fmt.Printf(flagFormat, "id", idFlagHelp)
-		fmt.Printf(flagFormat, "delete", deleteFlagHelp)
-		fmt.Printf(flagFormat, "debug", debugFlagHelp)
-		fmt.Printf(flagFormat, "help", helpFlagHelp)
+		usage()
 		return
 	}
 
-	updateSpreadsheet(loadData())
+	var err error
+
+	dataPath := *dataFlag
+	if strings.HasPrefix(dataPath, "~/") {
+		dataPath, err = path.HomePath(dataPath[2:])
+		if err != nil {
+			fmt.Printf("*** Error fixing data path:\n%v\n", err)
+			return
+		}
+	}
+	if _, err = os.Stat(dataPath); err != nil {
+		fmt.Printf("*** Data path %s error:\n%v\n", dataPath, err)
+		return
+	}
+
+	data, err := loadData(dataPath)
+	if err != nil {
+		fmt.Printf("*** Error loading data:\n%v\n", err)
+	}
+
+	err = updateSpreadsheet(data)
+	if err != nil {
+		fmt.Printf("*** Error updating spreadsheet:\n%v\n", err)
+	}
 
 	if *deleteFlag {
-		fmt.Printf("> Deleting %s\n", downloadPath)
-		err := os.RemoveAll(homePath(downloadPath))
-		if err != nil {
-			fmt.Printf("!!! Error deleting %s: %v", downloadPath, err)
+		fmt.Printf("> Deleting %s\n", dataPath)
+		if err := os.RemoveAll(dataPath); err != nil {
+			fmt.Printf("!!! Error deleting %s:\n%v\n", dataPath, err)
 		}
 	}
 
 	fmt.Println("Vanguard finished")
 }
 
-// Return a path constructed from the specified relative path and the user's home directory.
-// This will panic if there is no current user.
-func homePath(relPath string) string {
-	usr, err := user.Current()
-	if err != nil || usr == nil {
-		log.Panicf("Unable to get current user: %v", err)
-	}
-	if usr.HomeDir == "" {
-		log.Panic("No home directory for user")
-	}
-
-	return filepath.Join(usr.HomeDir, relPath)
-}
-
-func loadData() map[string]map[string]*positionData {
+// loadData acquires downloaded data from the specified path.
+func loadData(dataPath string) (map[string]map[string]*positionData, error) {
 	fmt.Println("Load Data starting")
 
-	file, err := os.Open(homePath(downloadPath))
+	file, err := os.Open(dataPath)
 	if err != nil {
-		log.Fatalf("Unable to open ~/%s: %v", downloadPath, err)
+		return nil, xerrors.Errorf("open data file %s: %w", dataPath, err)
 	}
 
 	state := start
@@ -201,7 +207,7 @@ func loadData() map[string]map[string]*positionData {
 			data.share = fields[4]
 			data.total = fields[5]
 		default:
-			log.Fatalf("Improper state %v", state)
+			return nil, xerrors.Errorf("improper state %v", state)
 		}
 
 		if positions[account] == nil {
@@ -212,8 +218,7 @@ func loadData() map[string]map[string]*positionData {
 	}
 
 	if err := scanner.Err(); err != nil {
-		_, _ = fmt.Fprintln(os.Stderr, "reading standard input:", err)
-
+		return nil, xerrors.Errorf("reading data: %w", err)
 	}
 
 	if *debugFlag > 1 {
@@ -224,26 +229,36 @@ func loadData() map[string]map[string]*positionData {
 
 	fmt.Println("Load Data finished")
 
-	return positions
+	return positions, nil
 }
 
-func updateSpreadsheet(positions map[string]map[string]*positionData) {
+// updateSpreadsheet pushes loaded data into the user's spreadsheet.
+func updateSpreadsheet(positions map[string]map[string]*positionData) error {
 	fmt.Println("Update Spreadsheet starting")
 
-	client, err := gDrv.GetClient(drive.DriveScope, slides.SpreadsheetsScope)
+	authorizer, err := gAuth.NewAuthorizer("vanguard", []string{"drive", "sheets"})
 	if err != nil {
-		log.Fatalf("Unable to acquire Drive client: %v", err)
+		return xerrors.Errorf("get authorizer: %w", err)
 	}
 
-	service, err := sheets.New(client)
+	client, err := authorizer.GetClient()
 	if err != nil {
-		log.Fatalf("Unable to retrieve Sheets service: %v", err)
+		return xerrors.Errorf("acquire client: %w", err)
 	}
 
-	_ = gSht.Limiter.Wait(context.Background())
+	service, err := sheets.NewService(context.Background(), option.WithHTTPClient(client))
+	if err != nil {
+		return xerrors.Errorf("retrieve sheets servce: %w", err)
+	}
+
+	err = gSht.Limiter.Wait(context.Background())
+	if err != nil {
+		return xerrors.Errorf("limiter wait: %w", err)
+	}
+
 	spreadsheet, err := service.Spreadsheets.Get(*idFlag).Do()
 	if err != nil {
-		log.Fatalf("Unable to retrieve spreadsheet: %v", err)
+		return xerrors.Errorf("retrieve spreadsheet: %w", err)
 	}
 
 	for _, sheet := range spreadsheet.Sheets {
@@ -256,7 +271,7 @@ func updateSpreadsheet(positions map[string]map[string]*positionData) {
 		headers, err := service.Spreadsheets.Values.Get(*idFlag, title+"!A1:Z2").Do()
 		if err != nil {
 			debugFmt(2, accountFormat, "", title, "no headers\n")
-			log.Fatalf("Unable to retrieve header row: %v", err)
+			return xerrors.Errorf("retrieve header row: %w", err)
 		}
 
 		colA1 := make(map[string]string)
@@ -311,7 +326,7 @@ func updateSpreadsheet(positions map[string]map[string]*positionData) {
 			title+"!A3:"+gSht.ColToAlpha(int(grid.ColumnCount))+strconv.Itoa(int(grid.RowCount-2))).Do()
 		if err != nil {
 			debugFmt(1, accountFormat, account, title, "no row data\n")
-			log.Fatalf("Unable to retrieve rows: %v", err)
+			return xerrors.Errorf("retrieve rows: %w", err)
 		}
 
 		rowNum := 2
@@ -339,7 +354,11 @@ func updateSpreadsheet(positions map[string]map[string]*positionData) {
 
 			debugFmt(3, rowFormat, rowNum, symbol, data, "\n")
 
-			_ = gSht.Limiter.Wait(context.Background())
+			err = gSht.Limiter.Wait(context.Background())
+			if err != nil {
+				return xerrors.Errorf("limiter wait: %w", err)
+			}
+
 			_, err := service.Spreadsheets.Values.BatchUpdate(*idFlag, &sheets.BatchUpdateValuesRequest{
 				ValueInputOption: "USER_ENTERED",
 				Data: []*sheets.ValueRange{
@@ -402,15 +421,14 @@ func updateSpreadsheet(positions map[string]map[string]*positionData) {
 
 			if err != nil {
 				debugFmt(3, rowFormat, rowNum, symbol, "update error\n")
-				fmt.Printf("!!! Error updating row: %v\n", err)
-				return
+				return xerrors.Errorf("updating row: %w", err)
 			}
 		}
 
 		debugFmt(1, accountFormat, account, title, "done\n")
 
 		if len(accountPositions) > 0 {
-			fmt.Println("!!! Unused symbols:")
+			fmt.Println("!!! Unused symbols (must be added manually):")
 			for symbol := range accountPositions {
 				fmt.Printf("!!!   %s\n", symbol)
 			}
@@ -418,6 +436,8 @@ func updateSpreadsheet(positions map[string]map[string]*positionData) {
 	}
 
 	fmt.Println("Update Spreadsheet finished")
+
+	return nil
 }
 
 func debugFmt(level int, format string, stuff ...interface{}) {
@@ -446,4 +466,13 @@ func symbolForFundName(fundName string) string {
 	}
 
 	return ""
+}
+
+func usage() {
+	fmt.Println("Usage:  vanguard")
+	fmt.Println("Flags:")
+	fmt.Printf(flagFormat, "id", idFlagHelp)
+	fmt.Printf(flagFormat, "delete", deleteFlagHelp)
+	fmt.Printf(flagFormat, "debug", debugFlagHelp)
+	fmt.Printf(flagFormat, "help", helpFlagHelp)
 }
