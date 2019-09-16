@@ -236,7 +236,7 @@ func loadData(dataPath string) (map[string]map[string]*positionData, error) {
 func updateSpreadsheet(positions map[string]map[string]*positionData) error {
 	fmt.Println("Update Spreadsheet starting")
 
-	authorizer, err := gAuth.NewAuthorizer("vanguard", []string{"drive", "sheets"})
+	authorizer, err := gAuth.NewAuthorizer("vanguard", []string{"spreadsheets"})
 	if err != nil {
 		return xerrors.Errorf("get authorizer: %w", err)
 	}
