@@ -5,7 +5,7 @@ go 1.12
 require (
 	cloud.google.com/go/compute v1.18.0 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
-	github.com/madkins23/go-google v1.0.1
+	github.com/madkins23/go-google v1.0.2
 	github.com/madkins23/go-utils v1.33.0
 	github.com/pkg/browser v0.0.0-20210911075715-681adbf594b8 // indirect
 	golang.org/x/oauth2 v0.4.0 // indirect
